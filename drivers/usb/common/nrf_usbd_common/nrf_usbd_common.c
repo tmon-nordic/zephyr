@@ -215,6 +215,14 @@ static uint32_t m_ep_ready;
  */
 static uint32_t m_ep_dma_waiting;
 
+/* Latch DMA requests before processing to prevent endpoint starvation. Clear
+ * individual bits from the latched registers after processing. When all latched
+ * requests are processed, currently pending requests are latched and therefore
+ * new DMA cycle begins. The resulting order somewhat resembles round-robin
+ * scheduling but requires only a single extra variable.
+ */
+static uint32_t m_dma_latched_req;
+
 /* Semaphore to guard EasyDMA access.
  * In USBD there is only one DMA channel working in background, and new transfer
  * cannot be started when there is ongoing transfer on any other channel.
@@ -838,7 +846,10 @@ static void usbd_dmareq_process(void)
 	    (k_sem_take(&dma_available, K_NO_WAIT) == 0)) {
 		uint32_t req;
 
-		while (0 != (req = m_ep_dma_waiting & m_ep_ready)) {
+		if (0 == (m_dma_latched_req & m_ep_dma_waiting & m_ep_ready)) {
+			m_dma_latched_req = m_ep_dma_waiting & m_ep_ready;
+		}
+		while (0 != (req = m_dma_latched_req & m_ep_dma_waiting & m_ep_ready)) {
 			uint8_t pos;
 
 			if (NRFX_USBD_CONFIG_DMASCHEDULER_ISO_BOOST &&
