@@ -16,6 +16,13 @@
 #ifndef ZEPHYR_INCLUDE_USB_CLASS_USBD_MSC_H_
 #define ZEPHYR_INCLUDE_USB_CLASS_USBD_MSC_H_
 
+/**
+ * @brief USB Mass Storage Class device API
+ * @defgroup usbd_msc_device USB Mass Storage Class device API
+ * @ingroup usb
+ * @{
+ */
+
 struct usbd_msc_lun {
 	const char *disk;
 	const char *vendor;
@@ -23,6 +30,19 @@ struct usbd_msc_lun {
 	const char *revision;
 };
 
+/**
+ * @brief Define USB Mass Storage Class logical unit
+ *
+ * Use this macro to create Logical Unit mapping in USB MSC for selected disk.
+ * Up to :kconfig:option:`CONFIG_USBD_MSC_LUNS_PER_INSTANCE` disks can be
+ * registered on single USB MSC instance. Currently only one USB MSC instance
+ * is supported.
+ *
+ * @param disk Disk name accessible through :ref:`disk_access_api`
+ * @param t10_vendor T10 Vendor Indetification
+ * @param t10_product T10 Product Identification
+ * @param t10_revision T10 Product Revision Level
+ */
 #define USBD_DEFINE_MSC_LUN(disk_name, t10_vendor, t10_product, t10_revision)	\
 	STRUCT_SECTION_ITERABLE(usbd_msc_lun, usbd_msc_lun_##disk_name) = {	\
 		.disk = STRINGIFY(disk_name),					\
@@ -30,5 +50,9 @@ struct usbd_msc_lun {
 		.product = t10_product,						\
 		.revision = t10_revision,					\
 	}
+
+/**
+ * @}
+ */
 
 #endif /* ZEPHYR_INCLUDE_USB_CLASS_USBD_MSC_H_ */
