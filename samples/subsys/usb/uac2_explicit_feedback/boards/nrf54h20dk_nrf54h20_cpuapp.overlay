@@ -37,7 +37,7 @@ i2s_tx: &tdm130 {
 /* PPI channel 1 for GPIOTE used for feedback in edge counter mode */
 &gpiote130 {
 	status = "okay";
-	owned-channels = <1>;
+	owned-channels = <0 1 2>;
 };
 
 &timer131 {

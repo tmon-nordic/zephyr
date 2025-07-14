@@ -65,6 +65,56 @@ static inline void feedback_target_init(void)
 static nrfx_timer_t feedback_timer_instance =
 	NRFX_TIMER_INSTANCE(NRF_TIMER_INST_GET(FEEDBACK_TIMER_INSTANCE_NUMBER));
 
+#include <nrfx_gpiote.h>
+#include <nrfx_timer.h>
+#include <helpers/nrfx_gppi.h>
+
+#if IS_ENABLED(CONFIG_SOC_SERIES_NRF54H)
+#define GPIOTE_PPI_SOF_PIN    (9 * 32)
+#define GPIOTE_PPI_MAXCNT_PIN (9 * 32) + 1
+#elif IS_ENABLED(CONFIG_SOC_COMPATIBLE_NRF5340_CPUAPP)
+#define GPIOTE_PPI_SOF_PIN    (0 * 32) + 28
+#define GPIOTE_PPI_MAXCNT_PIN (0 * 32) + 29
+#endif
+
+static uint32_t gpiote_setup(uint32_t pin)
+{
+	nrfx_gpiote_t *gpiote = &GPIOTE_NRFX_INST_BY_NODE(FEEDBACK_GPIOTE_NODE);
+	uint8_t gpiote_ch;
+	int err;
+
+	err = nrfx_gpiote_channel_alloc(gpiote, &gpiote_ch);
+	if (err != 0) {
+		LOG_ERR("failed to allocate gpiote");
+		return 0;
+	}
+
+	nrfx_gpiote_task_config_t task_config = {
+		.task_ch = gpiote_ch,
+		.polarity = NRF_GPIOTE_POLARITY_TOGGLE,
+		.init_val = NRF_GPIOTE_INITIAL_VALUE_LOW
+	};
+	nrfx_gpiote_output_config_t out_config = {
+		.drive = NRF_GPIO_PIN_S0S1,
+		.input_connect = NRF_GPIO_PIN_INPUT_DISCONNECT,
+		.pull = NRF_GPIO_PIN_NOPULL
+	};
+
+	err = nrfx_gpiote_output_configure(gpiote, pin, &out_config, &task_config);
+	if (err != 0) {
+		LOG_ERR("failed to configure pin");
+		return 0;
+	}
+
+#if NRF_GPIO_HAS_RETENTION_SETCLEAR
+	nrf_gpio_pin_retain_disable(pin);
+#endif
+
+	nrfx_gpiote_out_task_enable(gpiote, pin);
+
+	return nrfx_gpiote_out_task_address_get(gpiote, pin);
+}
+
 /* See 5.12.4.2 Feedback in Universal Serial Bus Specification Revision 2.0 for
  * more information about the feedback. There is a direct implementation of the
  * specification where P=1 when @kconfig{CONFIG_APP_USE_I2S_LRCLK_EDGES_COUNTER}
@@ -221,13 +271,20 @@ struct feedback_ctx *feedback_init(void)
 		return &fb_ctx;
 	}
 
-	/* Subscribe TIMER CAPTURE task to USBD SOF event */
-	err = nrfx_gppi_conn_alloc(USB_SOF_EVENT_ADDRESS, tsk1, &usbd_sof_gppi_handle);
+	/* GPIOTE needs to hop through bridge, so we have to set it up first.
+	 * The "forks" are not hopping through, and the GPIOTE would fail if
+	 * setup was called with USB SOF to TIMER CAPTURE.
+	 */
+	err = nrfx_gppi_conn_alloc(USB_SOF_EVENT_ADDRESS,
+				   gpiote_setup(GPIOTE_PPI_SOF_PIN),
+				   &usbd_sof_gppi_handle);
 	if (err < 0) {
 		LOG_ERR("gppi_conn_alloc failed with: %d\n", err);
 		return &fb_ctx;
 	}
 
+	/* Subscribe TIMER CAPTURE task to USBD SOF event */
+	nrfx_gppi_ep_attach(tsk1, usbd_sof_gppi_handle);
 	nrfx_gppi_ep_attach(nrfx_timer_task_address_get(&feedback_timer_instance,
 							NRF_TIMER_TASK_CLEAR),
 			    usbd_sof_gppi_handle);
@@ -240,6 +297,9 @@ struct feedback_ctx *feedback_init(void)
 		LOG_ERR("gppi_conn_alloc failed with: %d\n", err);
 		return &fb_ctx;
 	}
+
+	nrfx_gppi_ep_attach(gpiote_setup(GPIOTE_PPI_MAXCNT_PIN),
+			    i2s_framestart_gppi_handle);
 
 	nrfx_gppi_conn_enable(i2s_framestart_gppi_handle);
 
