@@ -385,6 +385,29 @@ static bool tdm_needs_restart(void)
 
 /* === USB === */
 
+static struct usb_dwc2_reg * const dwc2 = (struct usb_dwc2_reg *)NRF_USBHSCORE0;
+
+const uint32_t diepmsk = USB_DWC2_DIEPINT_INEPNAKEFF | USB_DWC2_DIEPINT_EPDISBLD |
+	USB_DWC2_DIEPINT_XFERCOMPL;
+const uint32_t doepmsk = USB_DWC2_DOEPINT_EPDISBLD | USB_DWC2_DOEPINT_XFERCOMPL;
+
+static uint32_t sof_prev;
+
+static buf_t iso_in_bufs[4];
+static buf_t iso_out_bufs[4];
+static uint32_t idx;
+
+static bool m_iso_in_act;
+static bool m_iso_out_act;
+
+static bool m_iso_in_queued, m_iso_out_queued;
+
+static buf_t queued_in_buf;
+static buf_t queued_out_buf;
+
+#define ISO_IN_EP 1
+#define ISO_OUT_EP 1
+
 static uint32_t get_next_sample_num(void)
 {
 	int offset = feedback_samples_offset(mp_fbck);
@@ -484,30 +507,197 @@ static void get_recv_buffer_for_iso_out(buf_t * p_buf)
 
 static void usb_process_buffers(void)
 {
-	static buf_t iso_in_bufs[4];
-	static buf_t iso_out_bufs[4];
-	static uint32_t idx;
 	/* Release buffers there were allocated 2 SOFs before. */
 	uint32_t free_idx = (idx - 2) & 0x3;
+	bool iso_in_act = !!(dwc2->in_ep[ISO_IN_EP].diepctl & USB_DWC2_DEPCTL_USBACTEP);
+	bool iso_out_act = !!(dwc2->out_ep[ISO_OUT_EP].doepctl & USB_DWC2_DEPCTL_USBACTEP);
 
+	if (m_iso_in_act != iso_in_act) {
+		m_iso_in_act = iso_in_act;
+		if (m_iso_in_act) {
+			LOG_ERR("IN EP activated");
+		} else {
+			LOG_ERR("IN EP deactivated, disable TDM");
+			if (m_iso_in_queued) {
+				LOG_ERR("releasing IN buffer");
+				release_iso_in_data(&queued_in_buf);
+				m_iso_in_queued = false;
+			}
+			tdm_disable();
+			buffers_flush();
+		}
+	}
+
+	if (m_iso_out_act != iso_out_act) {
+		m_iso_out_act = iso_out_act;
+		if (m_iso_out_act) {
+			LOG_ERR("OUT EP activated");
+		} else {
+			if (m_iso_out_queued) {
+				LOG_ERR("OUT EP deactivated, dropping queue");
+				queued_out_buf.sample_num = 0;
+				iso_out_data_received(&queued_out_buf);
+				m_iso_out_queued = false;
+			} else {
+				LOG_ERR("OUT EP deactivated");
+			}
+		}
+	}
+
+	if (!m_iso_in_act) {
+		return;
+	}
+#if 0
 	if (iso_in_bufs[free_idx].ptr) {
 		release_iso_in_data(&iso_in_bufs[free_idx]);
 	}
 
 	if (iso_out_bufs[free_idx].ptr) {
-		iso_out_data_received(&iso_out_bufs[free_idx]);
+		//iso_out_data_received(&iso_out_bufs[free_idx]);
 	}
 
 	get_next_iso_in_data(&iso_in_bufs[idx]);
 	get_recv_buffer_for_iso_out(&iso_out_bufs[idx]);
 	/* Use iso_in buffer size for iso out to propagate any applied offset. */
 	iso_out_bufs[idx].sample_num = iso_in_bufs[idx].sample_num;
+	//iso_out_bufs[idx].sample_num = 0;
+	iso_out_data_received(&iso_out_bufs[idx]);
 	// TODO configure USB with new buffers.
 
 	idx++;
 	idx &= 0x3;
 
 	m_tdm_counter++;
+#endif
+}
+
+static void usb_process_in(void)
+{
+	if (m_iso_in_queued) {
+		uint32_t diepint = dwc2->in_ep[ISO_IN_EP].diepint;
+		uint32_t status = diepint & diepmsk;
+
+		if (status) {
+			dwc2->in_ep[ISO_IN_EP].diepint = status;
+		}
+
+		if (status & USB_DWC2_DIEPINT_XFERCOMPL) {
+			release_iso_in_data(&queued_in_buf);
+			m_iso_in_queued = false;
+		}
+	}
+
+	if (!m_iso_in_queued) {
+		uint32_t addr, len;
+		uint32_t diepctl;
+
+		get_next_iso_in_data(&queued_in_buf);
+		m_iso_in_queued = true;
+
+		addr = (uint32_t)queued_in_buf.ptr;
+		len = queued_in_buf.sample_num * ISO_IN_CH_CNT * sizeof(sample_t);
+
+		dwc2->in_ep[ISO_IN_EP].dieptsiz =
+			usb_dwc2_set_dieptsizn_mc(1) |
+			usb_dwc2_set_dieptsizn_pktcnt(1) |
+			usb_dwc2_set_dieptsizn_xfersize(len);
+		dwc2->in_ep[ISO_IN_EP].diepdma = addr;
+
+		diepctl = dwc2->in_ep[ISO_IN_EP].diepctl;
+		if (!(diepctl & USB_DWC2_DEPCTL_USBACTEP)) {
+			LOG_ERR("IN queueing but ep not active");
+			/* TODO: Synchronize endpoint disable with app core */
+			release_iso_in_data(&queued_in_buf);
+			m_iso_in_queued = false;
+			return;
+		}
+
+		if (sof_prev & 1) {
+			diepctl |= USB_DWC2_DEPCTL_SETEVENFR;
+		} else {
+			diepctl |= USB_DWC2_DEPCTL_SETODDFR;
+		}
+
+		diepctl |= USB_DWC2_DEPCTL_EPENA | USB_DWC2_DEPCTL_CNAK;
+
+		dwc2->in_ep[ISO_IN_EP].diepctl = diepctl;
+	}
+}
+
+static void usb_process_out(void)
+{
+	if (m_iso_out_queued) {
+		uint32_t doepint = dwc2->out_ep[ISO_OUT_EP].doepint;
+		uint32_t status = doepint & doepmsk;
+
+		if (status) {
+			dwc2->out_ep[ISO_OUT_EP].doepint = status;
+		}
+
+		if (status & USB_DWC2_DOEPINT_XFERCOMPL) {
+			uint32_t orig_len = queued_out_buf.sample_num * ISO_OUT_CH_CNT * sizeof(sample_t);
+			uint32_t doeptsiz = dwc2->out_ep[ISO_OUT_EP].doeptsiz;
+			uint32_t bcnt;
+
+			bcnt = usb_dwc2_get_doeptsizn_xfersize(orig_len) -
+			       usb_dwc2_get_doeptsizn_xfersize(doeptsiz);
+
+			if (usb_dwc2_get_doeptsizn_pktcnt(doeptsiz) != 0 ||
+			    usb_dwc2_get_doeptsizn_rxdpid(doeptsiz) != USB_DWC2_DOEPTSIZN_RXDPID_DATA0) {
+				LOG_ERR("invalid data pid or pktcnt 0x%08x", doeptsiz);
+				/* bcnt = 0; */
+			}
+
+			queued_out_buf.sample_num = bcnt / (ISO_OUT_CH_CNT * sizeof(sample_t));
+			iso_out_data_received(&queued_out_buf);
+
+			m_tdm_counter++;
+
+			if (bcnt % (ISO_OUT_CH_CNT * sizeof(sample_t))) {
+				LOG_ERR("Received invalid number of bytes %d");
+			} else if (queued_out_buf.sample_num != 6) {
+				LOG_ERR("RX %d samples", queued_out_buf.sample_num);
+			}
+
+			m_iso_out_queued = false;
+		}
+	}
+
+	if (!m_iso_out_queued) {
+		uint32_t addr, len;
+		uint32_t doepctl;
+
+		get_recv_buffer_for_iso_out(&queued_out_buf);
+		m_iso_out_queued = true;
+
+		addr = (uint32_t)queued_out_buf.ptr;
+		len = queued_out_buf.sample_num * ISO_OUT_CH_CNT * sizeof(sample_t);
+
+		dwc2->out_ep[ISO_OUT_EP].doeptsiz =
+			usb_dwc2_set_doeptsizn_pktcnt(1) |
+			usb_dwc2_set_doeptsizn_xfersize(len);
+		dwc2->out_ep[ISO_OUT_EP].doepdma = addr;
+
+		doepctl = dwc2->out_ep[ISO_OUT_EP].doepctl;
+		if (!(doepctl & USB_DWC2_DEPCTL_USBACTEP)) {
+			/* TODO: Synchronize endpoint disable with app core */
+			queued_out_buf.sample_num = 0;
+			iso_out_data_received(&queued_out_buf);
+			m_tdm_counter++;
+			m_iso_out_queued = false;
+			return;
+		}
+
+		doepctl |= USB_DWC2_DEPCTL_EPENA | USB_DWC2_DEPCTL_CNAK;
+
+		if (sof_prev & 1) {
+			doepctl |= USB_DWC2_DEPCTL_SETEVENFR;
+		} else {
+			doepctl |= USB_DWC2_DEPCTL_SETODDFR;
+		}
+
+		dwc2->out_ep[ISO_OUT_EP].doepctl = doepctl;
+	}
 }
 
 /**
@@ -519,7 +709,6 @@ static void usb_process_buffers(void)
 static bool usb_sof_changed(void)
 {
 	static struct usb_dwc2_reg * const regs = (struct usb_dwc2_reg *)NRF_USBHSCORE0;
-	static uint32_t sof_prev;
 	volatile uint32_t sof_curr;
 	uint32_t diff;
 	int rpt = 3;
@@ -568,6 +757,10 @@ int main(void)
 
 	LOG_INF("FLPR started");
 
+	context_init();
+
+	uint32_t iso_in_delay;
+
 	while (1 || rpt) {
 		if (usb_sof_changed())
 		{
@@ -577,6 +770,22 @@ int main(void)
 			feedback_process(mp_fbck);
 			usb_process_buffers();
 			DBG_PIN_CLR(0);
+		}
+
+		if (m_iso_in_act) {
+			if (iso_in_delay == 8000 * 5) {
+				usb_process_in();
+			} else {
+				iso_in_delay++;
+			}
+		} else {
+			iso_in_delay = 0;
+		}
+
+		if (m_iso_out_act) {
+			if (iso_in_delay == 8000 * 5) {
+				usb_process_out();
+			}
 		}
 
 		if (nrf_tdm_event_check(NRF_TDM130, NRF_TDM_EVENT_TXPTRUPD))
@@ -610,7 +819,6 @@ int main(void)
 			LOG_INF("start TDM");
 
 			DBG_PIN_SET(3);
-			context_init();
 			/*tdm_start(&m_iso_in_buffers[0], &m_iso_out_buffers[0]);*/
 			tdm_start(&m_iso_in_buffers[0], &m_iso_out_buffers[0]);
 			feedback_start(mp_fbck, m_tdm_counter, true);
