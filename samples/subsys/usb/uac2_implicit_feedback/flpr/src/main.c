@@ -361,6 +361,7 @@ static void tdm_start(buf_t * p_in, buf_t * p_out)
 	tdm_set_rx_ptr(true);
 	tdm_set_tx_ptr();
 	nrf_tdm_transfer_direction_set(NRF_TDM130, NRF_TDM_RXTXEN_DUPLEX);
+	nrf_barrier_w();
 	nrf_tdm_task_trigger(NRF_TDM130, NRF_TDM_TASK_START);
 }
 
@@ -603,6 +604,7 @@ static void usb_process_in(void)
 			usb_dwc2_set_dieptsizn_xfersize(len);
 		dwc2->in_ep[ISO_IN_EP].diepdma = addr;
 
+		nrf_barrier_r();
 		diepctl = dwc2->in_ep[ISO_IN_EP].diepctl;
 		if (!(diepctl & USB_DWC2_DEPCTL_USBACTEP)) {
 			LOG_ERR("IN queueing but ep not active");
@@ -620,6 +622,7 @@ static void usb_process_in(void)
 
 		diepctl |= USB_DWC2_DEPCTL_EPENA | USB_DWC2_DEPCTL_CNAK;
 
+		nrf_barrier_w();
 		dwc2->in_ep[ISO_IN_EP].diepctl = diepctl;
 	}
 }
@@ -678,6 +681,7 @@ static void usb_process_out(void)
 			usb_dwc2_set_doeptsizn_xfersize(len);
 		dwc2->out_ep[ISO_OUT_EP].doepdma = addr;
 
+		nrf_barrier_r();
 		doepctl = dwc2->out_ep[ISO_OUT_EP].doepctl;
 		if (!(doepctl & USB_DWC2_DEPCTL_USBACTEP)) {
 			/* TODO: Synchronize endpoint disable with app core */
