@@ -409,6 +409,10 @@ static buf_t queued_out_buf;
 #define ISO_IN_EP 1
 #define ISO_OUT_EP 1
 
+static int num_iso_out_queued, num_iso_in_queued, num_iso_out_received, num_iso_in_sent;
+static bool iso_processing_enabled;
+static int incompisoin_counter, incompisoout_counter;
+
 static uint32_t get_next_sample_num(void)
 {
 	int offset = feedback_samples_offset(mp_fbck);
@@ -572,6 +576,21 @@ static void usb_process_buffers(void)
 #endif
 }
 
+static void check_incompiso(void)
+{
+	uint32_t gintsts = dwc2->gintsts;
+
+	if (gintsts & USB_DWC2_GINTSTS_INCOMPISOIN) {
+		incompisoin_counter++;
+		dwc2->gintsts = USB_DWC2_GINTSTS_INCOMPISOIN;
+	}
+
+	if (gintsts & USB_DWC2_GINTSTS_INCOMPISOOUT) {
+		incompisoout_counter++;
+		dwc2->gintsts = USB_DWC2_GINTSTS_INCOMPISOOUT;
+	}
+}
+
 static void usb_process_in(void)
 {
 	if (m_iso_in_queued) {
@@ -585,6 +604,8 @@ static void usb_process_in(void)
 		if (status & USB_DWC2_DIEPINT_XFERCOMPL) {
 			release_iso_in_data(&queued_in_buf);
 			m_iso_in_queued = false;
+
+			num_iso_in_sent++;
 		}
 	}
 
@@ -614,7 +635,8 @@ static void usb_process_in(void)
 			return;
 		}
 
-		if (sof_prev & 1) {
+		if (dwc2->dsts & BIT(USB_DWC2_DSTS_SOFFN_POS)) {
+//		if (sof_prev & 1) {
 			diepctl |= USB_DWC2_DEPCTL_SETEVENFR;
 		} else {
 			diepctl |= USB_DWC2_DEPCTL_SETODDFR;
@@ -624,6 +646,8 @@ static void usb_process_in(void)
 
 		nrf_barrier_w();
 		dwc2->in_ep[ISO_IN_EP].diepctl = diepctl;
+
+		num_iso_in_queued++;
 	}
 }
 
@@ -663,6 +687,8 @@ static void usb_process_out(void)
 			}
 
 			m_iso_out_queued = false;
+
+			num_iso_out_received++;
 		}
 	}
 
@@ -694,13 +720,17 @@ static void usb_process_out(void)
 
 		doepctl |= USB_DWC2_DEPCTL_EPENA | USB_DWC2_DEPCTL_CNAK;
 
-		if (sof_prev & 1) {
+		if (dwc2->dsts & BIT(USB_DWC2_DSTS_SOFFN_POS)) {
+//		if (sof_prev & 1) {
 			doepctl |= USB_DWC2_DEPCTL_SETEVENFR;
 		} else {
 			doepctl |= USB_DWC2_DEPCTL_SETODDFR;
 		}
 
+		nrf_barrier_w();
 		dwc2->out_ep[ISO_OUT_EP].doepctl = doepctl;
+
+		num_iso_out_queued++;
 	}
 }
 
@@ -719,6 +749,7 @@ static bool usb_sof_changed(void)
 	bool ret = true;
 
 	do {
+		nrf_barrier_r();
 		sof_curr = usb_dwc2_get_dsts_soffn(regs->dsts);
 		if (sof_prev == sof_curr) {
 			return false;
@@ -743,6 +774,21 @@ static bool usb_sof_changed(void)
 
 	sof_prev = sof_curr;
 
+	if (iso_processing_enabled) {
+
+		if (!num_iso_in_queued || !num_iso_out_queued ||
+		    !num_iso_in_sent || !num_iso_out_received) {
+			LOG_ERR("%d Q %d %d Xfer %d %d incomp IN %d OUT %d", sof_curr, num_iso_in_queued,
+				num_iso_out_queued, num_iso_in_sent, num_iso_out_received,
+				incompisoin_counter, incompisoout_counter);
+		}
+	}
+
+	num_iso_in_queued = 0;
+	num_iso_out_queued = 0;
+	num_iso_in_sent = 0;
+	num_iso_out_received = 0;
+
 	return ret;
 }
 
@@ -766,6 +812,8 @@ int main(void)
 	uint32_t iso_in_delay;
 
 	while (1 || rpt) {
+		nrf_barrier_rw();
+
 		if (usb_sof_changed())
 		{
 			rpt--;
@@ -776,14 +824,20 @@ int main(void)
 			DBG_PIN_CLR(0);
 		}
 
+		if (m_iso_in_act || m_iso_out_act) {
+			check_incompiso();
+		}
+
 		if (m_iso_in_act) {
 			if (iso_in_delay == 8000 * 5) {
+				iso_processing_enabled = true;
 				usb_process_in();
 			} else {
 				iso_in_delay++;
 			}
 		} else {
 			iso_in_delay = 0;
+			iso_processing_enabled = false;
 		}
 
 		if (m_iso_out_act) {
