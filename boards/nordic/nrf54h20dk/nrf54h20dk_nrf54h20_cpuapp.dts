@@ -34,6 +34,17 @@
 		led1 = &led1;
 		led2 = &led2;
 		led3 = &led3;
+		led4 = &led4;
+		led5 = &led5;
+		led6 = &led6;
+		led7 = &led7;
+		led8 = &led8;
+		led9 = &led9;
+		led10 = &led10;
+		led11 = &led11;
+		led12 = &led12;
+		led13 = &led13;
+		led14 = &led14;
 		resetinfo = &cpuapp_resetinfo;
 		pwm-led0 = &pwm_led2;
 		sw0 = &button0;
@@ -96,6 +107,61 @@
 		led3: led_3 {
 			gpios = <&gpio9 3 GPIO_ACTIVE_HIGH>;
 			label = "Green LED 3";
+		};
+
+		led4: led_4 {
+			gpios = <&gpio9 4 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 4";
+		};
+
+		led5: led_5 {
+			gpios = <&gpio9 5 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 5";
+		};
+
+		led6: led_6 {
+			gpios = <&gpio0 0 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 6";
+		};
+
+		led7: led_7 {
+			gpios = <&gpio0 1 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 7";
+		};
+
+		led8: led_8 {
+			gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 8";
+		};
+
+		led9: led_9 {
+			gpios = <&gpio0 3 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 9";
+		};
+
+		led10: led_10 {
+			gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 10";
+		};
+
+		led11: led_11 {
+			gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 11";
+		};
+
+		led12: led_12 {
+			gpios = <&gpio0 6 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 12";
+		};
+
+		led13: led_13 {
+			gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 13";
+		};
+
+		led14: led_14 {
+			gpios = <&gpio1 0 GPIO_ACTIVE_HIGH>;
+			label = "dummy LED 14";
 		};
 	};
 
@@ -230,6 +296,10 @@ slot3_partition: &cpurad_slot1_partition {
 	status = "okay";
 };
 
+&gpio1 {
+	status = "okay";
+};
+
 &gpio9 {
 	status = "okay";
 };
@@ -281,7 +351,8 @@ zephyr_udc0: &usbhs {
 };
 
 &can120 {
-	status = "okay";
+	/* Allow to use P9.04 and P9.05 as debug GPIO */
+	status = "disabled";
 	pinctrl-0 = <&can120_default>;
 	pinctrl-names = "default";
 };

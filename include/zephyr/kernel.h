@@ -7050,6 +7050,9 @@ void k_sys_runtime_stats_enable(void);
  */
 void k_sys_runtime_stats_disable(void);
 
+void debug_gpio_set(int num, bool high);
+void debug_gpio_toggle(int num);
+
 #ifdef __cplusplus
 }
 #endif

@@ -44,6 +44,99 @@
 
 LOG_MODULE_REGISTER(os, CONFIG_KERNEL_LOG_LEVEL);
 
+#if defined(CONFIG_SOC_NRF54H20_CPUAPP)
+#include <zephyr/drivers/gpio.h>
+static const struct gpio_dt_spec d0_p9_00 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec d1_p9_01 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
+static const struct gpio_dt_spec d2_p9_02 = GPIO_DT_SPEC_GET(DT_ALIAS(led2), gpios);
+static const struct gpio_dt_spec d3_p9_03 = GPIO_DT_SPEC_GET(DT_ALIAS(led3), gpios);
+static const struct gpio_dt_spec d4_p9_04 = GPIO_DT_SPEC_GET(DT_ALIAS(led4), gpios);
+static const struct gpio_dt_spec d5_p9_05 = GPIO_DT_SPEC_GET(DT_ALIAS(led5), gpios);
+static const struct gpio_dt_spec d6_p0_00 = GPIO_DT_SPEC_GET(DT_ALIAS(led6), gpios);
+static const struct gpio_dt_spec d7_p0_01 = GPIO_DT_SPEC_GET(DT_ALIAS(led7), gpios);
+static const struct gpio_dt_spec d8_p0_02 = GPIO_DT_SPEC_GET(DT_ALIAS(led8), gpios);
+static const struct gpio_dt_spec d9_p0_03 = GPIO_DT_SPEC_GET(DT_ALIAS(led9), gpios);
+static const struct gpio_dt_spec d10_p0_04 = GPIO_DT_SPEC_GET(DT_ALIAS(led10), gpios);
+static const struct gpio_dt_spec d11_p0_05 = GPIO_DT_SPEC_GET(DT_ALIAS(led11), gpios);
+static const struct gpio_dt_spec d12_p0_06 = GPIO_DT_SPEC_GET(DT_ALIAS(led12), gpios);
+static const struct gpio_dt_spec d13_p0_07 = GPIO_DT_SPEC_GET(DT_ALIAS(led13), gpios);
+static const struct gpio_dt_spec d14_p1_00 = GPIO_DT_SPEC_GET(DT_ALIAS(led14), gpios);
+
+static void debug_gpio_init(void)
+{
+	/* P9.00 and P9.01 are triggered from PPI (SOF and MAXCNT) */
+	if (0) {
+		gpio_pin_configure_dt(&d0_p9_00, GPIO_OUTPUT);
+		gpio_pin_configure_dt(&d1_p9_01, GPIO_OUTPUT);
+	}
+
+	gpio_pin_configure_dt(&d2_p9_02, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d3_p9_03, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d4_p9_04, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d5_p9_05, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d6_p0_00, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d7_p0_01, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d8_p0_02, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d9_p0_03, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d10_p0_04, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d11_p0_05, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d12_p0_06, GPIO_OUTPUT);
+	gpio_pin_configure_dt(&d13_p0_07, GPIO_OUTPUT);
+
+	/* Reserve P1.00 for triggering from PPI (decimated SOF) */
+	if (0) {
+		gpio_pin_configure_dt(&d14_p1_00, GPIO_OUTPUT);
+	}
+}
+
+static const struct gpio_dt_spec *debug_gpio(int num)
+{
+	switch (num) {
+	case 0: return &d0_p9_00;
+	case 1: return &d1_p9_01;
+	case 2: return &d2_p9_02;
+	case 3: return &d3_p9_03;
+	case 4: return &d4_p9_04;
+	case 5: return &d5_p9_05;
+	case 6: return &d6_p0_00;
+	case 7: return &d7_p0_01;
+	case 8: return &d8_p0_02;
+	case 9: return &d9_p0_03;
+	case 10: return &d10_p0_04;
+	case 11: return &d11_p0_05;
+	case 12: return &d12_p0_06;
+	case 13: return &d13_p0_07;
+	case 14: return &d14_p1_00;
+	default: return &d0_p9_00;
+	}
+}
+
+void debug_gpio_set(int num, bool high)
+{
+	gpio_pin_set_dt(debug_gpio(num), high);
+}
+
+void debug_gpio_toggle(int num)
+{
+	gpio_pin_toggle_dt(debug_gpio(num));
+}
+#else
+static void debug_gpio_init(void)
+{
+}
+
+void debug_gpio_set(int num, bool high)
+{
+	ARG_UNUSED(num);
+	ARG_UNUSED(high);
+}
+
+void debug_gpio_toggle(int num)
+{
+	ARG_UNUSED(num);
+}
+#endif
+
 /* the only struct z_kernel instance */
 __pinned_bss
 struct z_kernel _kernel;
@@ -578,6 +671,8 @@ FUNC_NORETURN void z_cstart(void)
 	timing_init();
 	timing_start();
 #endif /* CONFIG_TIMING_FUNCTIONS_NEED_AT_BOOT */
+
+	debug_gpio_init();
 
 #ifdef CONFIG_MULTITHREADING
 	switch_to_main_thread(prepare_multithreading());
