@@ -273,6 +273,7 @@ uac2_buf_alloc(const uint8_t ep, void *data, uint16_t size)
 
 	buf = net_buf_alloc_with_data(&uac2_pool, data, size, K_NO_WAIT);
 	if (!buf) {
+		debug_gpio_toggle(5);
 		return NULL;
 	}
 
@@ -323,8 +324,12 @@ int usbd_uac2_send(const struct device *dev, uint8_t terminal,
 		}
 	}
 
+	debug_gpio_set((queued_bits == &ctx->as_double) ? 4 : 3, true);
+
 	buf = uac2_buf_alloc(ep, data, size);
 	if (!buf) {
+		debug_gpio_set((queued_bits == &ctx->as_double) ? 4 : 3, false);
+
 		/* This shouldn't really happen because netbuf should be large
 		 * enough, but if it does all we loose is just single packet.
 		 */
@@ -335,6 +340,9 @@ int usbd_uac2_send(const struct device *dev, uint8_t terminal,
 
 	ret = usbd_ep_enqueue(cfg->c_data, buf);
 	if (ret) {
+		debug_gpio_toggle(6);
+		debug_gpio_set((queued_bits == &ctx->as_double) ? 4 : 3, false);
+
 		LOG_ERR("Failed to enqueue net_buf for 0x%02x", ep);
 		net_buf_unref(buf);
 		atomic_clear_bit(queued_bits, as_idx);
@@ -378,13 +386,18 @@ static void schedule_iso_out_read(struct usbd_class_data *const c_data,
 	/* Prepare transfer to read audio OUT data from host */
 	data_buf = ctx->ops->get_recv_buf(dev, terminal, mps, ctx->user_data);
 	if (!data_buf) {
+		debug_gpio_toggle(7);
 		LOG_ERR_RATELIMIT("No data buffer for terminal %d", terminal);
 		atomic_clear_bit(queued_bits, as_idx);
 		return;
 	}
 
+	debug_gpio_set((queued_bits == &ctx->as_double) ? 9 : 8, true);
+
 	buf = uac2_buf_alloc(ep, data_buf, mps);
 	if (!buf) {
+		debug_gpio_set((queued_bits == &ctx->as_double) ? 9 : 8, false);
+
 		LOG_ERR("No netbuf for read");
 		/* Netbuf pool should be large enough, but if for some reason
 		 * we are out of netbuf, there's nothing better to do than to
@@ -398,6 +411,9 @@ static void schedule_iso_out_read(struct usbd_class_data *const c_data,
 
 	ret = usbd_ep_enqueue(c_data, buf);
 	if (ret) {
+		debug_gpio_toggle(6);
+		debug_gpio_set((queued_bits == &ctx->as_double) ? 9 : 8, false);
+
 		LOG_ERR("Failed to enqueue net_buf for 0x%02x", ep);
 		net_buf_unref(buf);
 		ctx->ops->data_recv_cb(dev, terminal,
@@ -444,6 +460,7 @@ static void write_explicit_feedback(struct usbd_class_data *const c_data,
 
 	ret = usbd_ep_enqueue(c_data, buf);
 	if (ret) {
+		debug_gpio_toggle(6);
 		LOG_ERR("Failed to enqueue net_buf for 0x%02x", ep);
 		net_buf_unref(buf);
 	} else {
@@ -804,6 +821,7 @@ static int uac2_request(struct usbd_class_data *const c_data, struct net_buf *bu
 	uint16_t mps;
 	int as_idx;
 	bool is_feedback;
+	bool double_queue = false;
 
 	bi = udc_get_buf_info(buf);
 	if (err) {
@@ -830,13 +848,16 @@ static int uac2_request(struct usbd_class_data *const c_data, struct net_buf *bu
 		}
 	} else if (!atomic_test_and_clear_bit(&ctx->as_queued, as_idx)) {
 		atomic_clear_bit(&ctx->as_double, as_idx);
+		double_queue = true;
 	}
 
 	if (USB_EP_DIR_IS_OUT(ep)) {
 		ctx->ops->data_recv_cb(dev, terminal, buf->__buf, buf->len,
 				       ctx->user_data);
+		debug_gpio_set((double_queue) ? 9 : 8, false);
 	} else if (!is_feedback) {
 		ctx->ops->buf_release_cb(dev, terminal, buf->__buf, ctx->user_data);
+		debug_gpio_set((double_queue) ? 4 : 3, false);
 	}
 
 	usbd_ep_buf_free(uds_ctx, buf);
