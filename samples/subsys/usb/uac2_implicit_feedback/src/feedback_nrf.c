@@ -29,13 +29,88 @@ static inline void feedback_target_init(void)
 	/* No target specific init necessary */
 }
 
+static inline void feedback_target_start(bool microframes)
+{
+	ARG_UNUSED(microframes);
+}
+
+#if SOF_PERIOD_TRACKING_NEEDED
+#error "bInterval values other than 1 are currently not supported"
+#endif
+
 #elif IS_ENABLED(CONFIG_SOC_SERIES_NRF54HX)
 
 #include <hal/nrf_tdm.h>
 
 #define FEEDBACK_TIMER_INSTANCE_NUMBER 131
-#define USB_SOF_EVENT_ADDRESS nrf_timer_event_address_get(NRF_TIMER131, NRF_TIMER_EVENT_COMPARE5)
 #define I2S_FRAMESTART_EVENT_ADDRESS nrf_tdm_event_address_get(NRF_TDM130, NRF_TDM_EVENT_MAXCNT)
+
+#if SOF_PERIOD_TRACKING_NEEDED
+/* bInterval != 1 support requires separate timer to decimate SOF */
+#define SOF_DECIMATOR_TIMER_INSTANCE_NUMBER 130
+#define SOF_DECIMATOR_COUNT_ADDRESS nrf_timer_task_address_get(NRF_TIMER130, NRF_TIMER_TASK_COUNT)
+
+static nrfx_timer_t sof_decimator_timer_instance =
+	NRFX_TIMER_INSTANCE(NRF_TIMER_INST_GET(SOF_DECIMATOR_TIMER_INSTANCE_NUMBER));
+
+static void sof_decimator_init(void)
+{
+	nrfx_gppi_handle_t usbd_sof_gppi_handle;
+	const nrfx_timer_config_t cfg = {
+		.frequency = NRFX_MHZ_TO_HZ(16UL),
+		.mode = NRF_TIMER_MODE_COUNTER,
+		.bit_width = NRF_TIMER_BIT_WIDTH_32,
+		.interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,
+		.p_context = NULL,
+	};
+	uint32_t sof_event = nrf_timer_event_address_get(NRF_TIMER131, NRF_TIMER_EVENT_COMPARE5);
+	int err;
+
+	err = nrfx_timer_init(&sof_decimator_timer_instance, &cfg, NULL);
+	if (err != 0) {
+		LOG_ERR("SOF nrfx timer init error - Return value: %d", err);
+		return;
+	}
+
+	nrfx_timer_extended_compare(&sof_decimator_timer_instance, NRF_TIMER_CC_CHANNEL1,
+		HIGH_SPEED_SOF_PERIODS, NRF_TIMER_SHORT_COMPARE1_CLEAR_MASK, false);
+
+	/* Subscribe TIMER CAPTURE task to USBD SOF event */
+	err = nrfx_gppi_conn_alloc(sof_event, SOF_DECIMATOR_COUNT_ADDRESS,
+				   &usbd_sof_gppi_handle);
+	if (err != 0) {
+		LOG_ERR("gppi_channel_alloc failed with: %d\n", err);
+		return;
+	}
+
+	nrfx_gppi_conn_enable(usbd_sof_gppi_handle);
+
+	nrfx_timer_enable(&sof_decimator_timer_instance);
+}
+
+static inline void feedback_target_start(bool microframes)
+{
+	nrfx_timer_compare(&sof_decimator_timer_instance, NRF_TIMER_CC_CHANNEL1,
+		microframes ? HIGH_SPEED_SOF_PERIODS : FULL_SPEED_SOF_PERIODS,
+		false);
+
+	nrfx_timer_clear(&sof_decimator_timer_instance);
+}
+#define USB_SOF_EVENT_ADDRESS nrf_timer_event_address_get(NRF_TIMER130, NRF_TIMER_EVENT_COMPARE1)
+#else
+/* bInterval=1, use SOF event directly */
+#define USB_SOF_EVENT_ADDRESS nrf_timer_event_address_get(NRF_TIMER131, NRF_TIMER_EVENT_COMPARE5)
+
+static inline void feedback_target_start(bool microframes)
+{
+	ARG_UNUSED(microframes);
+}
+
+static inline void sof_decimator_init(void)
+{
+	/* SOF decimator is not used */
+}
+#endif
 
 static inline void feedback_target_init(void)
 {
@@ -43,8 +118,9 @@ static inline void feedback_target_init(void)
 	*(volatile uint32_t *)0x5F9A3C04 = 0x00000002;
 	*(volatile uint32_t *)0x5F9A3C04 = 0x00000003;
 	*(volatile uint32_t *)0x5F9A3C80 = 0x00000082;
-}
 
+	sof_decimator_init();
+}
 #else
 #error "Unsupported target"
 #endif
@@ -190,10 +266,12 @@ void feedback_reset_ctx(struct feedback_ctx *ctx)
 void feedback_start(struct feedback_ctx *ctx, int i2s_blocks_queued,
 		    bool microframes)
 {
+	feedback_target_start(microframes);
+
 	if (microframes) {
-		ctx->nominal = SAMPLE_RATE / 8000;
+		ctx->nominal = HIGH_SPEED_SOF_PERIODS * SAMPLE_RATE / 8000;
 	} else {
-		ctx->nominal = SAMPLE_RATE / 1000;
+		ctx->nominal = FULL_SPEED_SOF_PERIODS * SAMPLE_RATE / 1000;
 	}
 
 	/* I2S data was supposed to go out at SOF, but it is inevitably
