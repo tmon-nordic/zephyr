@@ -35,6 +35,10 @@ i2s_rxtx: &tdm130 {
 	status = "okay";
 };
 
+&timer130 {
+	status = "okay";
+};
+
 &timer131 {
 	status = "okay";
 };
