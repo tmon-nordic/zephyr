@@ -48,6 +48,7 @@ static inline void feedback_target_start(bool microframes)
 
 #define GPIOTE_PPI_SOF_PIN    (9 * 32)
 #define GPIOTE_PPI_MAXCNT_PIN (9 * 32) + 1
+#define GPIOTE_PPI_BASE_SOF_PIN (1 * 32) + 0
 
 static uint32_t gpiote_setup(uint32_t pin)
 {
@@ -121,12 +122,14 @@ static void sof_decimator_init(void)
 		HIGH_SPEED_SOF_PERIODS, NRF_TIMER_SHORT_COMPARE1_CLEAR_MASK, false);
 
 	/* Subscribe TIMER CAPTURE task to USBD SOF event */
-	err = nrfx_gppi_conn_alloc(sof_event, SOF_DECIMATOR_COUNT_ADDRESS,
+	err = nrfx_gppi_conn_alloc(sof_event, gpiote_setup(GPIOTE_PPI_BASE_SOF_PIN),
 				   &usbd_sof_gppi_handle);
 	if (err != 0) {
 		LOG_ERR("gppi_channel_alloc failed with: %d\n", err);
 		return;
 	}
+
+	nrfx_gppi_ep_attach(SOF_DECIMATOR_COUNT_ADDRESS, usbd_sof_gppi_handle);
 
 	nrfx_gppi_conn_enable(usbd_sof_gppi_handle);
 

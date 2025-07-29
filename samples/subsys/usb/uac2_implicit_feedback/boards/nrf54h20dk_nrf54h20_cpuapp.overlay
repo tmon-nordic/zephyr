@@ -37,7 +37,7 @@ i2s_rxtx: &tdm130 {
 
 &gpiote130 {
 	status = "okay";
-	owned-channels = <0 3>;
+	owned-channels = <0 3 4>;
 };
 
 &timer130 {
