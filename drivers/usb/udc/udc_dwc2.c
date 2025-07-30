@@ -370,6 +370,7 @@ static int dwc2_tx_fifo_write(const struct device *dev,
 		 * (micro-)frame at a time.
 		 */
 		len = MIN(buf->len, USB_MPS_TO_TPL(cfg->mps));
+		debug_gpio_set(11, true);
 	} else {
 		/* DMA automatically handles packet split. In completer mode,
 		 * the value is sanitized below.
@@ -613,6 +614,8 @@ static void dwc2_prep_rx(const struct device *dev, struct net_buf *buf,
 				doepctl |= USB_DWC2_DEPCTL_SETODDFR;
 			}
 		}
+
+		debug_gpio_set(2, true);
 	} else {
 		xfersize = net_buf_tailroom(buf);
 
@@ -2450,6 +2453,10 @@ static inline void dwc2_handle_in_xfercompl(const struct device *dev,
 		return;
 	}
 
+	if (dwc2_ep_is_iso(ep_cfg)) {
+		debug_gpio_set(11, false);
+	}
+
 	atomic_set_bit(&priv->xfer_finished, ep_idx);
 	k_event_post(&priv->ep_disabled, BIT(ep_idx));
 	k_event_post(&priv->drv_evt, BIT(DWC2_DRV_EVT_EP_FINISHED));
@@ -2595,6 +2602,8 @@ static inline void dwc2_handle_out_xfercompl(const struct device *dev,
 			/* Data is not valid, discard it */
 			bcnt = 0;
 		}
+
+		debug_gpio_set(2, false);
 	}
 
 	if (dwc2_in_buffer_dma_mode(dev) && bcnt) {
