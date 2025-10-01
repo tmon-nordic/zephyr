@@ -2545,6 +2545,45 @@ static void udc_dwc2_unlock(const struct device *dev)
 	k_sched_unlock();
 }
 
+static void dwc2_handle_pktdrpsts_workaround(const struct device *dev,
+					     uint32_t int_status, uint32_t *gintmsk)
+{
+	struct usb_dwc2_reg *const base = dwc2_get_base(dev);
+	mem_addr_t dcfg_reg = (mem_addr_t)&base->dcfg;
+	uint32_t dcfg = sys_read32(dcfg_reg);
+	uint32_t new_dcfg = dcfg;
+
+	if (int_status & USB_DWC2_GINTSTS_SOF) {
+		/* Start new attempt */
+		new_dcfg &= ~USB_DWC2_DCFG_PERFRINT_MASK;
+		new_dcfg |= usb_dwc2_set_dcfg_perfrint(USB_DWC2_DCFG_PERFRINT_EOPF80);
+
+		if (int_status & USB_DWC2_GINTSTS_EOPF) {
+			/* We don't know if EOPF happened before SOF or not, assume
+			 * it was after so clear it and wait for next chace.
+			 */
+			sys_write32(USB_DWC2_GINTSTS_EOPF, (mem_addr_t)&base->gintsts);
+		}
+	} else if (int_status & USB_DWC2_GINTSTS_EOPF) {
+		sys_write32(USB_DWC2_GINTSTS_EOPF, (mem_addr_t)&base->gintsts);
+
+		new_dcfg &= ~USB_DWC2_DCFG_PERFRINT_MASK;
+		if (usb_dwc2_get_dcfg_perfrint(dcfg) == USB_DWC2_DCFG_PERFRINT_EOPF80) {
+			/* Hope we will make it */
+			new_dcfg |= usb_dwc2_set_dcfg_perfrint(USB_DWC2_DCFG_PERFRINT_EOPF95);
+		} else if (usb_dwc2_get_dcfg_perfrint(dcfg) == USB_DWC2_DCFG_PERFRINT_EOPF95) {
+			/* Workaround succeeded */
+			new_dcfg |= usb_dwc2_set_dcfg_perfrint(USB_DWC2_DCFG_PERFRINT_EOPF80);
+			*gintmsk &= ~USB_DWC2_GINTSTS_EOPF;
+			sys_write32(*gintmsk, (mem_addr_t)&base->gintmsk);
+		}
+	}
+
+	if (new_dcfg != dcfg) {
+		sys_write32(new_dcfg, dcfg_reg);
+	}
+}
+
 static void dwc2_on_bus_reset(const struct device *dev)
 {
 	struct usb_dwc2_reg *const base = dwc2_get_base(dev);
@@ -2568,6 +2607,10 @@ static void dwc2_on_bus_reset(const struct device *dev)
 	doepmsk = USB_DWC2_DOEPINT_SETUP | USB_DWC2_DOEPINT_EPDISBLD | USB_DWC2_DOEPINT_XFERCOMPL;
 	if (dwc2_in_buffer_dma_mode(dev)) {
 		doepmsk |= USB_DWC2_DOEPINT_STSPHSERCVD;
+	}
+
+	if (IS_ENABLED(CONFIG_UDC_DWC2_PTI)) {
+		doepmsk |= USB_DWC2_DOEPINT_PKTDRPSTS;
 	}
 
 	sys_write32(doepmsk, (mem_addr_t)&base->doepmsk);
@@ -2861,7 +2904,7 @@ static inline void dwc2_handle_out_xfercompl(const struct device *dev,
 	}
 }
 
-static inline void dwc2_handle_oepint(const struct device *dev)
+static inline void dwc2_handle_oepint(const struct device *dev, uint32_t *gintmsk)
 {
 	struct usb_dwc2_reg *const base = dwc2_get_base(dev);
 	struct udc_dwc2_data *const priv = udc_get_private(dev);
@@ -2880,6 +2923,29 @@ static inline void dwc2_handle_oepint(const struct device *dev)
 
 		/* Read and clear interrupt status */
 		doepint = sys_read32(doepint_reg);
+
+		if (doepint & USB_DWC2_DOEPINT_PKTDRPSTS) {
+			mem_addr_t dcfg_reg = (mem_addr_t)&base->dcfg;
+			uint32_t dcfg;
+
+			/* Try to toggle EOPF twice between two SOFs to ensure
+			 * that PktDrpSts is not fatal.
+			 */
+			if (!(*gintmsk & USB_DWC2_GINTSTS_EOPF)) {
+				*gintmsk |= USB_DWC2_GINTSTS_EOPF;
+				sys_write32(*gintmsk, (mem_addr_t)&base->gintmsk);
+			}
+
+			dcfg = sys_read32(dcfg_reg);
+			if (usb_dwc2_get_dcfg_perfrint(dcfg) != USB_DWC2_DCFG_PERFRINT_EOPF80) {
+				dcfg &= ~USB_DWC2_DCFG_PERFRINT_MASK;
+				dcfg |= usb_dwc2_set_dcfg_perfrint(USB_DWC2_DCFG_PERFRINT_EOPF80);
+				sys_write32(dcfg, dcfg_reg);
+			}
+
+			sys_write32(USB_DWC2_GINTSTS_EOPF, (mem_addr_t)&base->gintsts);
+		}
+
 		status = doepint & doepmsk;
 		sys_write32(status, doepint_reg);
 
@@ -3168,6 +3234,11 @@ static void udc_dwc2_isr_handler(const struct device *dev)
 
 		LOG_DBG("GINTSTS 0x%x", int_status);
 
+		if (IS_ENABLED(CONFIG_UDC_DWC2_PTI) &&
+		    gintmsk & USB_DWC2_GINTSTS_EOPF) {
+			dwc2_handle_pktdrpsts_workaround(dev, int_status, &gintmsk);
+		}
+
 		if (IS_ENABLED(CONFIG_UDC_ENABLE_SOF) &&
 		    int_status & USB_DWC2_GINTSTS_SOF) {
 			uint32_t dsts;
@@ -3217,7 +3288,7 @@ static void udc_dwc2_isr_handler(const struct device *dev)
 
 		if (int_status & USB_DWC2_GINTSTS_OEPINT) {
 			/* Handle OUT Endpoints interrupt */
-			dwc2_handle_oepint(dev);
+			dwc2_handle_oepint(dev, &gintmsk);
 		}
 
 		if (IS_ENABLED(CONFIG_UDC_ENABLE_SOF) &&
