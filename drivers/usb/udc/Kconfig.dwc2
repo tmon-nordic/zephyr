@@ -29,6 +29,7 @@ config UDC_DWC2_HIBERNATION
 
 config UDC_DWC2_PTI
 	bool "DWC2 USB Periodic Transfer Interrupt"
+	depends on UDC_ENABLE_SOF
 	help
 	  Ignore frame number when scheduling isochronous endpoints. Use this
 	  when isochronous transfers should finish only after receiving token
