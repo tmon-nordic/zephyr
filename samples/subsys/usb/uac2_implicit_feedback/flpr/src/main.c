@@ -223,7 +223,7 @@ static int ringbuf_init(struct ringbuf *rb, sample_t *buf, size_t size,
  * - copy 2 samples
  * - ...
  */
-static int ringbuf_put(struct ringbuf *rb, sample_t *buf, size_t sample_num)
+static int ringbuf_put(struct ringbuf *rb, const sample_t *buf, size_t sample_num)
 {
 	size_t rem_space = rb->size - rb->prod_idx;
 	size_t len = sample_num * rb->ch_valid;
@@ -464,6 +464,8 @@ static buf_t queued_out_buf;
 static int num_iso_out_queued, num_iso_in_queued, num_iso_out_received, num_iso_in_sent;
 static bool iso_processing_enabled;
 
+static void zero_fill_iso_out(size_t sample_num);
+
 static uint32_t get_next_sample_num(void)
 {
 	int offset = feedback_samples_offset(mp_fbck);
@@ -510,6 +512,12 @@ static void get_next_iso_in_data(buf_t *p_buf)
 	if (ret < 0) {
 		LOG_WRN("No data, sending empty");
 	}
+
+	if (!m_iso_out_act) {
+		/* Host only records microphone, send fake data */
+		zero_fill_iso_out(p_buf->sample_num);
+		m_tdm_counter++;
+	}
 }
 
 static void release_iso_in_data(buf_t * p_buf)
@@ -521,14 +529,8 @@ static void release_iso_in_data(buf_t * p_buf)
 	k_mem_slab_free(&iso_in_slab, p_buf->ptr);
 }
 
-static void iso_out_data_received(buf_t * p_buf)
+static void write_iso_out_data(const sample_t *ptr, size_t sample_num)
 {
-	/* is called when USB transfer on ISO OUT endpoint is complete (or if there was no ISO
-	 * OUT packet and SOF arrived). When this function is called, the buffer is owned by FLPR.
-	 */
-	static const sample_t dummy_buf[ISO_OUT_CH_CNT * (SAMPLES_NUM + 1)];
-	size_t sample_num = p_buf->sample_num ? p_buf->sample_num : SAMPLES_NUM;
-	sample_t *ptr = p_buf->sample_num ? p_buf->ptr : (uint32_t *)dummy_buf;
 	int size_diff = sample_num - SAMPLES_NUM;
 	int ret;
 
@@ -540,6 +542,25 @@ static void iso_out_data_received(buf_t * p_buf)
 	ret = ringbuf_put(&context.from_usb, ptr, sample_num);
 	if (ret < 0) {
 		LOG_WRN("no room for data");
+	}
+}
+
+static void zero_fill_iso_out(size_t sample_num)
+{
+	static const sample_t dummy_buf[ISO_OUT_CH_CNT * (SAMPLES_NUM + 1)];
+
+	write_iso_out_data(dummy_buf, sample_num);
+}
+
+static void iso_out_data_received(buf_t * p_buf)
+{
+	/* is called when USB transfer on ISO OUT endpoint is complete (or if there was no ISO
+	 * OUT packet and SOF arrived). When this function is called, the buffer is owned by FLPR.
+	 */
+	if (p_buf->sample_num) {
+		write_iso_out_data(p_buf->ptr, p_buf->sample_num);
+	} else {
+		zero_fill_iso_out(SAMPLES_NUM);
 	}
 
 	k_mem_slab_free(&iso_out_slab, p_buf->ptr);
