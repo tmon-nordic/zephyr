@@ -9,6 +9,7 @@
 
 #include <sample_usbd.h>
 #include "feedback.h"
+#include "../flpr/src/flpr_shared.h"
 
 #include <zephyr/device.h>
 #include <zephyr/usb/usbd.h>
@@ -678,6 +679,24 @@ static void clock_started_callback(struct onoff_manager *mgr, struct onoff_clien
 	LOG_INF("Clock ok");
 }
 #endif
+
+void flpr_endpoint_enable(uint8_t ep) {
+	if (USB_EP_DIR_IS_OUT(ep)) {
+		FLPR_SHARED(iso_out_ep_enabled) = 1;
+	} else {
+		FLPR_SHARED(iso_in_ep_enabled) = 1;
+	}
+}
+
+void flpr_endpoint_disable(uint8_t ep) {
+	if (USB_EP_DIR_IS_OUT(ep)) {
+		FLPR_SHARED(iso_out_ep_enabled) = 0;
+		while (FLPR_SHARED(flpr_uses_iso_out));
+	} else {
+		FLPR_SHARED(iso_in_ep_enabled) = 0;
+		while (FLPR_SHARED(flpr_uses_iso_in));
+	}
+}
 
 int main(void)
 {

@@ -5,6 +5,7 @@
 #include <zephyr/kernel.h>
 #include <../drivers/usb/common/usb_dwc2_hw.h>
 #include "../../src/feedback.h"
+#include "flpr_shared.h"
 
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(main, LOG_LEVEL_WRN);
@@ -561,32 +562,29 @@ static void get_recv_buffer_for_iso_out(buf_t * p_buf)
 	p_buf->sample_num = SAMPLES_NUM + 1;
 }
 
-static void usb_process_buffers(void)
+static void sync_with_app_core(void)
 {
-	bool iso_in_act = !!(dwc2->in_ep[ISO_IN_EP].diepctl & USB_DWC2_DEPCTL_USBACTEP);
-	bool iso_out_act = !!(dwc2->out_ep[ISO_OUT_EP].doepctl & USB_DWC2_DEPCTL_USBACTEP);
+	if (FLPR_SHARED(iso_out_ep_enabled)) {
+		if (!m_iso_out_act) {
+			/* Mark endpoint as used by FLPR */
+			FLPR_SHARED(flpr_uses_iso_out) = 1;
+			nrf_barrier_rw();
 
-	if (m_iso_in_act != iso_in_act) {
-		m_iso_in_act = iso_in_act;
-		if (m_iso_in_act) {
-			LOG_ERR("IN EP activated");
-		} else {
-			LOG_ERR("IN EP deactivated, disable TDM");
-			if (m_iso_in_queued) {
-				LOG_ERR("releasing IN buffer");
-				release_iso_in_data(&queued_in_buf);
-				m_iso_in_queued = false;
+			if (!FLPR_SHARED(iso_out_ep_enabled)) {
+				/* App core doesn't want to enable after all */
+				FLPR_SHARED(flpr_uses_iso_out) = 0;
+			} else {
+				m_iso_out_act = true;
+				LOG_ERR("OUT EP activated");
 			}
-			tdm_disable();
-			buffers_flush();
 		}
-	}
-
-	if (m_iso_out_act != iso_out_act) {
-		m_iso_out_act = iso_out_act;
+	} else {
 		if (m_iso_out_act) {
-			LOG_ERR("OUT EP activated");
-		} else {
+			/* Let App core know that it can deactivate endpoint */
+			FLPR_SHARED(flpr_uses_iso_out) = 0;
+			nrf_barrier_rw();
+
+			m_iso_out_act = false;
 			if (m_iso_out_queued) {
 				LOG_ERR("OUT EP deactivated, dropping queue");
 				queued_out_buf.sample_num = 0;
@@ -595,6 +593,38 @@ static void usb_process_buffers(void)
 			} else {
 				LOG_ERR("OUT EP deactivated");
 			}
+		}
+	}
+
+	if (FLPR_SHARED(iso_in_ep_enabled)) {
+		if (!m_iso_in_act) {
+			/* Mark endpoint as used by FLPR */
+			FLPR_SHARED(flpr_uses_iso_in) = 1;
+			nrf_barrier_rw();
+
+			if (!FLPR_SHARED(iso_in_ep_enabled)) {
+				/* App core doesn't want to enable after all */
+				FLPR_SHARED(flpr_uses_iso_in) = 0;
+			} else {
+				m_iso_in_act = true;
+				LOG_ERR("IN EP activated");
+			}
+		}
+	} else {
+		if (m_iso_in_act) {
+			/* Let App core know that it can deactivate endpoint */
+			FLPR_SHARED(flpr_uses_iso_in) = 0;
+			nrf_barrier_rw();
+
+			m_iso_in_act = false;
+			LOG_ERR("IN EP deactivated, disable TDM");
+			if (m_iso_in_queued) {
+				LOG_ERR("releasing IN buffer");
+				release_iso_in_data(&queued_in_buf);
+				m_iso_in_queued = false;
+			}
+			tdm_disable();
+			buffers_flush();
 		}
 	}
 }
@@ -792,7 +822,7 @@ static bool usb_sof_changed(void)
 		return false;
 	}
 #endif
-
+#if 0
 	if (iso_processing_enabled) {
 
 		if (!num_iso_in_queued || !num_iso_out_queued ||
@@ -805,7 +835,7 @@ static bool usb_sof_changed(void)
 			DBG_PIN_CLR(1);
 		}
 	}
-
+#endif
 	num_iso_in_queued = 0;
 	num_iso_out_queued = 0;
 	num_iso_in_sent = 0;
@@ -818,6 +848,12 @@ static bool usb_sof_changed(void)
 
 int main(void)
 {
+	/* This code assumes FLPR starts before App core reads FLPR_SHARED */
+	FLPR_SHARED(iso_out_ep_enabled) = false;
+	FLPR_SHARED(iso_in_ep_enabled) = false;
+	FLPR_SHARED(flpr_uses_iso_out) = false;
+	FLPR_SHARED(flpr_uses_iso_in) = false;
+
 	tdm_init();
 	mp_fbck = feedback_init();
 	int rpt = 10;
@@ -833,27 +869,20 @@ int main(void)
 
 	context_init();
 
-	uint32_t iso_in_delay = 0;
-
 	while (1 || rpt) {
 		nrf_barrier_rw();
 
+		sync_with_app_core();
+
 		if (m_iso_in_act) {
-			if (iso_in_delay == 8000 * 5) {
-				iso_processing_enabled = true;
-				usb_process_in();
-			} else {
-				iso_in_delay++;
-			}
+			iso_processing_enabled = true;
+			usb_process_in();
 		} else {
-			iso_in_delay = 0;
 			iso_processing_enabled = false;
 		}
 
 		if (m_iso_out_act) {
-			if (iso_in_delay == 8000 * 5) {
-				usb_process_out();
-			}
+			usb_process_out();
 		}
 
 		if (usb_sof_changed())
@@ -862,7 +891,6 @@ int main(void)
 			DBG_PIN_SET(0);
 			LOG_INF("sof pending tdm rx:%d", context.to_usb.total);
 			feedback_process(mp_fbck);
-			usb_process_buffers();
 			DBG_PIN_CLR(0);
 		}
 

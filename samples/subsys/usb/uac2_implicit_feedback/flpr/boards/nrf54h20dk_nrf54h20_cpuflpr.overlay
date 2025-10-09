@@ -10,11 +10,21 @@
 	reserved-memory {
 		cpuflpr_dma_region: memory@2fc12200 {
 			compatible = "nordic,owned-memory", "zephyr,memory-region";
-			reg = <0x2fc12200 3584>;
+			reg = <0x2fc12200 3552>;
 			status = "okay";
 			#memory-region-cells = <0>;
 			nordic,access = <NRF_OWNER_ID_APPLICATION NRF_PERM_RW>;
 			zephyr,memory-region = "DMA_RAM3x_FLPR";
+			zephyr,memory-attr = <( DT_MEM_DMA )>;
+		};
+
+		cpuflpr_shared: memory@0x2fc12fe0 {
+			compatible = "nordic,owned-memory", "zephyr,memory-region";
+			reg = <0x2fc12fe0 32>;
+			status = "okay";
+			#memory-region-cells = <0>;
+			nordic,access = <NRF_OWNER_ID_APPLICATION NRF_PERM_RW>;
+			zephyr,memory-region = "DMA_RAM3x_FLPR_SHARED";
 			zephyr,memory-attr = <( DT_MEM_DMA )>;
 		};
 	};

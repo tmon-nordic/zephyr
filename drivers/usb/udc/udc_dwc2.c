@@ -376,11 +376,6 @@ static void dwc2_set_epint(const struct device *dev,
 	uint8_t ep_idx = USB_EP_GET_IDX(cfg->addr);
 	uint32_t epmsk;
 
-	if (dwc2_ep_is_iso(cfg)) {
-		/* FLPR handles isochronous endpoints */
-		return;
-	}
-
 	if (USB_EP_DIR_IS_IN(cfg->addr)) {
 		epmsk = USB_DWC2_DAINT_INEPINT(ep_idx);
 	} else {
@@ -1581,6 +1576,14 @@ static int udc_dwc2_ep_activate(const struct device *dev,
 			i, sys_read32((mem_addr_t)&base->dieptxf[i - 1U]), i, dxepctl);
 	}
 
+	if (dwc2_ep_is_iso(cfg)) {
+		/* FLPR handles endpoint interrupts */
+		dwc2_set_epint(dev, cfg, false);
+
+		extern void flpr_endpoint_enable(uint8_t ep);
+		flpr_endpoint_enable(cfg->addr);
+	}
+
 	return 0;
 }
 
@@ -1741,6 +1744,17 @@ static int udc_dwc2_ep_deactivate(const struct device *dev,
 
 	dxepctl_reg = dwc2_get_dxepctl_reg(dev, cfg->addr);
 	dxepctl = sys_read32(dxepctl_reg);
+
+	if (dwc2_ep_is_iso(cfg)) {
+		extern void flpr_endpoint_disable(uint8_t ep);
+		flpr_endpoint_disable(cfg->addr);
+
+		dxepctl = sys_read32(dxepctl_reg);
+		if (dxepctl & USB_DWC2_DEPCTL_EPENA) {
+			k_event_clear(&priv->ep_disabled, BIT(ep_idx));
+			dwc2_set_epint(dev, cfg, true);
+		}
+	}
 
 	if (dxepctl & USB_DWC2_DEPCTL_USBACTEP) {
 		LOG_DBG("Disable ep 0x%02x DxEPCTL%u %x",
