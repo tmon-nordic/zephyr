@@ -47,25 +47,25 @@ i2s_rxtx: &tdm130 {
 /* TDM130 PPI needs routing to TIMER131 through main APB */
 &dppic130 {
 	compatible = "nordic,nrf-dppic-global";
-	owned-channels = <0 2>;
-	sink-channels = <0 2>;
-	source-channels = <0 2>;
-	nonsecure-channels = <0 2>;
+	owned-channels = <0 2 3>;
+	sink-channels = <0 2 3>;
+	source-channels = <0 2 3>;
+	nonsecure-channels = <0 2 3>;
 	status = "okay";
 };
 
 /* TIMER131 PPI channel 1 is used for SOF */
 &dppic133 {
 	compatible = "nordic,nrf-dppic-global";
-	owned-channels = <0 1 2>;
+	owned-channels = <0 1 2 3>;
 	sink-channels = <0 1>;
-	source-channels = <2>;
+	source-channels = <2 3>;
 	status = "okay";
 };
 
 &gpiote130 {
 	status = "okay";
-	owned-channels = <0 2>;
+	owned-channels = <0 2 3>;
 };
 
 &timer131 {

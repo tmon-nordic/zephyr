@@ -41,6 +41,9 @@ static const nrfx_gpiote_t gpiote = NRFX_GPIOTE_INSTANCE(130);
 #define GPIOTE_PPI_SOF_PIN    (9 * 32)
 #define GPIOTE_PPI_MAXCNT_PIN (9 * 32) + 1
 
+#define FEEDBACK_TIMER_SOF_OFFSET_COMPARE 2
+#define GPIOTE_PPI_SOF_WITH_OFFSET_PIN    (1 * 32)
+
 static uint32_t gpiote_setup(uint32_t pin)
 {
 	uint8_t gpiote_ch;
@@ -122,6 +125,7 @@ struct feedback_ctx *feedback_init(void)
 	nrfx_err_t err;
 	uint8_t usbd_sof_gppi_channel;
 	uint8_t i2s_framestart_gppi_channel;
+	uint8_t sof_with_offset_channel;
 	const nrfx_timer_config_t cfg = {
 		.frequency = NRFX_MHZ_TO_HZ(16UL),
 		.mode = NRF_TIMER_MODE_TIMER,
@@ -178,6 +182,22 @@ struct feedback_ctx *feedback_init(void)
 		gpiote_setup(GPIOTE_PPI_MAXCNT_PIN));
 
 	nrfx_gppi_channels_enable(BIT(i2s_framestart_gppi_channel));
+
+	/* Configure GPIOTE to toggle 100 us after SOF */
+	err = nrfx_gppi_channel_alloc(&sof_with_offset_channel);
+	if (err != NRFX_SUCCESS) {
+		LOG_ERR("gppi_channel_alloc failed with: %d\n", err);
+		return &fb_ctx;
+	}
+
+	nrfx_timer_compare(&feedback_timer_instance, FEEDBACK_TIMER_SOF_OFFSET_COMPARE,
+		cfg.frequency / 10000, false);
+	nrfx_gppi_channel_endpoints_setup(sof_with_offset_channel,
+		nrfx_timer_compare_event_address_get(&feedback_timer_instance,
+			FEEDBACK_TIMER_SOF_OFFSET_COMPARE),
+		gpiote_setup(GPIOTE_PPI_SOF_WITH_OFFSET_PIN));
+
+	nrfx_gppi_channels_enable(BIT(sof_with_offset_channel));
 
 	/* Enable feedback timer */
 	nrfx_timer_enable(&feedback_timer_instance);
