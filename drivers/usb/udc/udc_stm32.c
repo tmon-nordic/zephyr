@@ -358,6 +358,15 @@ static int udc_stm32_initiate_ep_rx(
 	HAL_StatusTypeDef status;
 	uint32_t rx_size;
 
+	if (ep_cfg->addr == USB_CONTROL_EP_OUT) {
+		struct udc_buf_info *bi = udc_get_buf_info(buf);
+
+		if (bi->setup) {
+			/* SETUP data will be received without any action */
+			return 0;
+		}
+	}
+
 	/*
 	 * NOTE: we don't check udc_ep_is_busy(ep_cfg) here because
 	 * this may be called while the endpoint is still *marked*
