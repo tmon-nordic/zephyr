@@ -524,7 +524,7 @@ static void handle_msg_data_out(struct udc_stm32_data *priv, uint8_t epnum, uint
 				"Received more data from Host than expected!");
 
 		/* Check if the data stage is complete */
-		if (buf->len < priv->ep0_out_wlength) {
+		if (rx_count == 64 && buf->len < priv->ep0_out_wlength) {
 			HAL_StatusTypeDef __maybe_unused status;
 			uint32_t rx_size = MIN(net_buf_tailroom(buf),
 					       UDC_STM32_EP0_MAX_PACKET_SIZE);
