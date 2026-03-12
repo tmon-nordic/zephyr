@@ -313,20 +313,10 @@ static int udc_stm32_tx(const struct device *dev, struct udc_ep_config *ep_cfg,
 	return 0;
 }
 
-/**
- * Start accepting packets (OUT transfers) on @p ep_cfg
- *
- * @param dev UDC device
- * @param ep_cfg Endpoint descriptor
- * @param buf Buffer for received data
- *
- * @pre No active transfer on @p ep_cfg (endpoint not busy)
- * @post On success, @p ep_cfg is marked as busy (i.e., `udc_ep_is_busy(ep_cfg) == true`)
- */
-static int udc_stm32_initiate_ep_rx(
-	const struct device *dev,
-	struct udc_ep_config *ep_cfg,
-	struct net_buf *buf)
+/* Start accepting packets (OUT transfers) */
+static int udc_stm32_initiate_ep_rx(const struct device *dev,
+				    struct udc_ep_config *const ep_cfg,
+				    struct net_buf *const buf)
 {
 	struct udc_stm32_data *priv = udc_get_private(dev);
 	HAL_StatusTypeDef status;
