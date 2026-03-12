@@ -278,16 +278,6 @@ void HAL_PCDEx_SetConnectionState(PCD_HandleTypeDef *hpcd, uint8_t state)
 	}
 }
 
-static void udc_stm32_flush_tx_fifo(const struct device *dev)
-{
-	struct udc_stm32_data *priv = udc_get_private(dev);
-	struct udc_ep_config *ep_cfg = udc_get_ep_cfg(dev, USB_CONTROL_EP_OUT);
-	HAL_StatusTypeDef __maybe_unused status;
-
-	status = HAL_PCD_EP_Receive(&priv->pcd, ep_cfg->addr, NULL, 0);
-	__ASSERT_NO_MSG(status == HAL_OK);
-}
-
 static int udc_stm32_tx(const struct device *dev, struct udc_ep_config *ep_cfg,
 			struct net_buf *buf)
 {
@@ -319,22 +309,6 @@ static int udc_stm32_tx(const struct device *dev, struct udc_ep_config *ep_cfg,
 	}
 
 	udc_ep_set_busy(ep_cfg, true);
-
-	if (ep_cfg->addr == USB_CONTROL_EP_IN && len > 0U) {
-		/* Wait for an empty package from the host.
-		 * This also flushes the TX FIFO to the host.
-		 */
-
-		/**
-		 * TODO: on DWC2-based STM32 IPs, we used to
-		 * enqueue(?!) a ZLP on OUT EP0. Replacing this
-		 * with a mere HAL_PCD_EP_Receive(NULL, 0) seems
-		 * to work fine, but is it really sound?
-		 *
-		 * Do we need special handling?
-		 */
-		udc_stm32_flush_tx_fifo(dev);
-	}
 
 	return 0;
 }
