@@ -769,6 +769,19 @@ static inline void *usbd_class_get_private(const struct usbd_class_data *const c
 	}									\
 	))
 
+#define USBD_CLASS_GET_DT(node) _CONCAT(__usbd_class_, DT_DEP_ORD(node))
+
+#define Z_USB_CLASS_INST_DECLARE_INTERNAL(node) \
+extern const char *USBD_CLASS_GET_DT(node);
+
+#if CONFIG_USBD_CDC_ACM_CLASS
+DT_FOREACH_STATUS_OKAY(zephyr_cdc_acm_uart, Z_USB_CLASS_INST_DECLARE_INTERNAL)
+#endif
+
+#define USBD_DEFINE_CLASS_DT(node, class_name, class_api, class_priv, class_v_reqs)	\
+	const char *USBD_CLASS_GET_DT(node) = STRINGIFY(class_name);			\
+	USBD_DEFINE_CLASS(class_name, class_api, class_priv, class_v_reqs)
+
 /** @brief Helper to declare request table of usbd_cctx_vendor_req
  *
  *  @param _reqs Pointer to the vendor request field

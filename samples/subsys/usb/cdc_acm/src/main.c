@@ -162,6 +162,9 @@ int main(void)
 {
 	int ret;
 
+	LOG_INF("CDC ACM instance registered under class: %s",
+		USBD_CLASS_GET_DT(DT_COMPAT_GET_ANY_STATUS_OKAY(zephyr_cdc_acm_uart)));
+
 	if (!device_is_ready(uart_dev)) {
 		LOG_ERR("CDC ACM device not ready");
 		return 0;
