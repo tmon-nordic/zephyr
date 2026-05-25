@@ -285,7 +285,7 @@ static void usbhs_bc_vbus_detected(const struct device *dev)
 	struct usbhs_bc_data *const data = dev->data;
 
 	if (data->partner_state.bc12_role != BC12_PORTABLE_DEVICE) {
-		LOG_ERR("Ignore VBUS event, not portabel device role");
+		LOG_ERR("Ignore VBUS event, not portable device role");
 		return;
 	}
 
@@ -307,7 +307,7 @@ static void usbhs_bc_vbus_removed(const struct device *dev)
 	k_spinlock_key_t key;
 
 	if (data->partner_state.bc12_role != BC12_PORTABLE_DEVICE) {
-		LOG_ERR("Ignore VBUS event, not portabel device role");
+		LOG_ERR("Ignore VBUS event, not portable device role");
 		return;
 	}
 
