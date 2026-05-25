@@ -53,12 +53,6 @@ void nrf_usbhs_wrapper_udc_post_enable(const struct device *dev);
 /* This function should be called from UDC driver disable quirk. */
 void nrf_usbhs_wrapper_udc_disable(const struct device *dev);
 
-/*
- * Notify wrapper that UDC driver is enabled. This function should be
- * called from the UDC driver.
- */
-void nrf_usbhs_wrapper_set_udc_enabled(const struct device *dev, const bool enabled);
-
 /* Start USB peripheral */
 void nrf_usbhs_wrapper_stop(const struct device *dev);
 
