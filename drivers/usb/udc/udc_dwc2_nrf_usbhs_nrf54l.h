@@ -59,39 +59,71 @@ static inline int usbhs_init_vreg_and_clock(const struct device *dev)
 	return 0;
 }
 
-static inline int usbhs_enable_core(const struct device *dev)
+static int usbhs_request_pclk24m(void)
 {
-	const struct device *parent = DEVICE_DT_GET(DT_INST_PARENT(0));
-	struct k_event *events = nrf_usbhs_wrapper_get_events_ptr(parent);
 	LOG_MODULE_DECLARE(udc_dwc2, CONFIG_UDC_DRIVER_LOG_LEVEL);
-	k_timeout_t timeout = K_FOREVER;
 	int err;
-
-	if (CONFIG_UDC_DWC2_USBHS_VBUS_READY_TIMEOUT) {
-		timeout = K_MSEC(CONFIG_UDC_DWC2_USBHS_VBUS_READY_TIMEOUT);
-	}
-
-	if (!k_event_wait(events, NRF_USBHS_VBUS_READY, false, K_NO_WAIT)) {
-		LOG_WRN("VBUS is not ready, block udc_enable()");
-		if (!k_event_wait(events, NRF_USBHS_VBUS_READY, false, timeout)) {
-			return -ETIMEDOUT;
-		}
-	}
-
-	nrf_usbhs_wrapper_set_udc_enabled(parent, true);
 
 	/* Request PCLK24M using clock control driver */
 	sys_notify_init_spinwait(&pclk24m_cli.notify);
 	err = onoff_request(pclk24m_mgr, &pclk24m_cli);
 	if (err < 0) {
 		LOG_ERR("Failed to start PCLK24M %d", err);
-		nrf_usbhs_wrapper_set_udc_enabled(parent, false);
 		return err;
 	}
 
-	err = nrf_usbhs_wrapper_udc_pre_enable(parent);
-	if (err != 0) {
-		nrf_usbhs_wrapper_set_udc_enabled(parent, false);
+	return 0;
+}
+
+static int usbhs_release_pclk24m(void)
+{
+	LOG_MODULE_DECLARE(udc_dwc2, CONFIG_UDC_DRIVER_LOG_LEVEL);
+	int err;
+
+	/* Release PCLK24M using clock control driver */
+	err = onoff_cancel_or_release(pclk24m_mgr, &pclk24m_cli);
+	if (err < 0) {
+		LOG_ERR("Failed to stop PCLK24M %d", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static inline int usbhs_enable_core(const struct device *dev)
+{
+	const struct device *parent = DEVICE_DT_GET(DT_INST_PARENT(0));
+	struct k_event *events = nrf_usbhs_wrapper_get_events_ptr(parent);
+	LOG_MODULE_DECLARE(udc_dwc2, CONFIG_UDC_DRIVER_LOG_LEVEL);
+	k_timeout_t timeout = K_FOREVER;
+	bool warning_printed = false;
+	int err = -EAGAIN;
+
+	if (CONFIG_UDC_DWC2_USBHS_VBUS_READY_TIMEOUT) {
+		timeout = K_MSEC(CONFIG_UDC_DWC2_USBHS_VBUS_READY_TIMEOUT);
+	}
+
+	while (err == -EAGAIN) {
+		if (!k_event_wait(events, NRF_USBHS_VBUS_READY, false, K_NO_WAIT)) {
+			if (!warning_printed) {
+				LOG_WRN("VBUS is not ready, block udc_enable()");
+				warning_printed = true;
+			}
+
+			if (!k_event_wait(events, NRF_USBHS_VBUS_READY, false, timeout)) {
+				return -ETIMEDOUT;
+			}
+		}
+
+		err = usbhs_request_pclk24m();
+		if (err < 0) {
+			return err;
+		}
+
+		err = nrf_usbhs_wrapper_udc_pre_enable(parent);
+		if (err != 0) {
+			usbhs_release_pclk24m();
+		}
 	}
 
 	return err;
@@ -110,15 +142,9 @@ static inline int usbhs_disable_core(const struct device *dev)
 {
 	const struct device *parent = DEVICE_DT_GET(DT_INST_PARENT(0));
 	LOG_MODULE_DECLARE(udc_dwc2, CONFIG_UDC_DRIVER_LOG_LEVEL);
-	int err;
 
 	nrf_usbhs_wrapper_udc_disable(parent);
-	/* Release PCLK24M using clock control driver */
-	err = onoff_cancel_or_release(pclk24m_mgr, &pclk24m_cli);
-	if (err < 0) {
-		LOG_ERR("Failed to stop PCLK24M %d", err);
-		return err;
-	}
+	usbhs_release_pclk24m();
 
 	return 0;
 }
