@@ -185,6 +185,7 @@ static void usbhs_wrapper_disable_check(const struct device *dev)
 	const struct usbhs_wrapper_config *const config = dev->config;
 	struct nrf_usbhs_wrapper_data *const data = dev->data;
 	NRF_USBHS_Type *wrapper = config->base;
+	uint32_t inputoverride;
 
 	if (data->bc12_state == BC12_ACTIVE) {
 		return;
@@ -196,8 +197,14 @@ static void usbhs_wrapper_disable_check(const struct device *dev)
 	}
 
 	/* Set role to Device, force D+ pull-up off by overriding VBUS valid signal */
-	wrapper->PHY.INPUTOVERRIDE = USBHS_PHY_INPUTOVERRIDE_ID_Msk |
-				     USBHS_PHY_INPUTOVERRIDE_VBUSVALID_Msk;
+	inputoverride = USBHS_PHY_INPUTOVERRIDE_ID_Msk |
+			USBHS_PHY_INPUTOVERRIDE_VBUSVALID_Msk;
+	if (!data->udc_enabled) {
+		/* PCLK24M is stopped or will be stopped soon */
+		inputoverride |= USBHS_PHY_INPUTOVERRIDE_SUSPENDM0_Msk;
+	}
+
+	wrapper->PHY.INPUTOVERRIDE = inputoverride;
 	wrapper->PHY.OVERRIDEVALUES = USBHS_PHY_OVERRIDEVALUES_ID_Msk;
 
 	if (data->dcp) {
@@ -396,6 +403,9 @@ void nrf_usbhs_wrapper_udc_disable(const struct device *dev)
 	data->udc_enabled = false;
 	usbhs_wrapper_disable_check(dev);
 	k_spin_unlock(&data->lock, key);
+
+	/* Ensure minimum required time passes before UDC disables PCLK24M */
+	k_busy_wait(3);
 }
 
 struct k_event *nrf_usbhs_wrapper_get_events_ptr(const struct device *dev)
